@@ -64,7 +64,9 @@ import {getAuth,onAuthStateChanged,signInAnonymously,signInWithEmailAndPassword,
 import {getFirestore,collection,doc,addDoc,updateDoc,query,where,orderBy,limit,getDocs,onSnapshot,serverTimestamp} from "https://www.gstatic.com/firebasejs/13.0.0/firebase-firestore.js";
 
 const app=initializeApp({apiKey:"AIzaSyC2EqQPDFlLx0c9puSqmPI6t_UFwQeGVPo",authDomain:"safe-space-8fd09.firebaseapp.com",projectId:"safe-space-8fd09",storageBucket:"safe-space-8fd09.firebasestorage.app",messagingSenderId:"656666751314",appId:"1:656666751314:web:24f07c6c5caf0f7384ca8b"});
-const auth=getAuth(app),db=getFirestore(app);
+const auth=getAuth(app);
+const cands=[getFirestore(app),getFirestore(app,"default")];
+let db=cands[0],dbReady=false;
 
 const MODES={
  talk:{name:"I Need to Talk",sub:"For someone who needs to talk and be heard.",guide:"Reflect back and ask gentle, open questions."},
@@ -78,10 +80,17 @@ const TABS=[["home","Home"],["sessions","My Sessions"],["resources","Resources"]
 const $=s=>document.querySelector(s),main=$("#main");
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
 let me=null,isListener=false,view="home",cur=null,subs=[];
-const toast=m=>{const t=$("#toast");t.textContent=m;t.style.display="block";setTimeout(()=>t.style.display="none",3500)};
+const toast=m=>{const t=$("#toast");t.textContent=m;t.style.display="block";setTimeout(()=>t.style.display="none",8000)};
 const when=ts=>ts&&ts.toDate?ts.toDate().toLocaleString([],{dateStyle:"medium",timeStyle:"short"}):"just now";
 const listen=(q,ok,err)=>{subs.push(onSnapshot(q,ok,err||(e=>toast("Connection problem. Please try again."))))};
 
+async function pickDb(){
+ for(const d of cands){
+  try{await Promise.race([getDocs(query(collection(d,"listeners"),limit(1))),new Promise((_,j)=>setTimeout(()=>j({code:"timeout"}),6000))]);return d}
+  catch(e){if(e.code==="permission-denied")return d}
+ }
+ return cands[0];
+}
 async function checkListener(){
  try{await getDocs(query(collection(db,"conversations"),limit(1)));isListener=true}catch(e){isListener=false}
  return isListener;
@@ -89,6 +98,7 @@ async function checkListener(){
 onAuthStateChanged(auth,async u=>{
  if(!u){signInAnonymously(auth).catch(()=>toast("Could not connect."));return}
  me=u.uid;
+ if(!dbReady){db=await pickDb();dbReady=true}
  if(u.email)await checkListener();else isListener=false;
  render();
 });
@@ -124,9 +134,9 @@ function home(){
 async function start(mode,btn){
  btn.disabled=true;
  try{
-  const r=await addDoc(collection(db,"conversations"),{userId:me,mode,status:"waiting",createdAt:serverTimestamp(),lastMessageAt:serverTimestamp()});
+  const r=await Promise.race([addDoc(collection(db,"conversations"),{userId:me,mode,status:"waiting",createdAt:serverTimestamp(),lastMessageAt:serverTimestamp()}),new Promise((_,j)=>setTimeout(()=>j({code:"timeout"}),10000))]);
   cur={id:r.id,mode,role:"user"};view="chat";render();
- }catch(e){toast("Could not start a conversation. Please try again.");btn.disabled=false}
+ }catch(e){toast("Could not start ("+(e.code||"error")+"). Please try again.");btn.disabled=false}
 }
 
 function chat(){
