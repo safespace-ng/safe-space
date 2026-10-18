@@ -65,6 +65,15 @@ main{padding:28px 36px}#home{max-width:560px;margin:0 auto}}
 .sheet button.d{color:#d9534f}
 .rw{display:flex;gap:8px;margin-bottom:10px}.rw .row{margin:0;flex:1}.rm{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:0 12px;color:var(--mute)}
 @media(pointer:coarse){.m{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tab{flex:1;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:8px 4px;font-size:.85rem}
+.tab.on{background:var(--teal);color:var(--bg);border-color:var(--teal);font-weight:700}
+.chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px;padding-bottom:4px}
+.chip2{flex:none;border:1px solid var(--line);background:var(--card);border-radius:99px;padding:4px 12px;font-size:.8rem;white-space:nowrap}
+.chip2.on{border-color:var(--teal);font-weight:700}
+.chip2.m-talk,.chip.m-talk{background:var(--c1)}.chip2.m-listen,.chip.m-listen{background:var(--c2)}.chip2.m-advice,.chip.m-advice{background:var(--c3)}
+.need{color:#d9534f;font-weight:700;font-size:.78rem;margin-left:8px}
+.pv{color:var(--mute);font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -126,8 +135,9 @@ function nav(){
 }
 function go(v){view=v;render()}
 function render(){
+ if(view==="chat"&&!(history.state&&history.state.chat))history.pushState({chat:1},"");
  subs.forEach(u=>u());subs=[];nav();main.innerHTML="";
- if(!me&&view!=="home"){main.appendChild(el("p","empty","Connecting…"));return}
+ if(!me&&view!=="home"&&view!=="chat"){main.appendChild(el("p","empty","Connecting…"));return}
  ({home,chat,sessions,resources,profile,inbox})[view]();
  main.scrollTop=0;
 }
@@ -147,27 +157,21 @@ function home(){
  p.innerHTML=`<span style="font-size:1.6rem" aria-hidden="true">🛡️</span><span><b>Your privacy matters.</b>Your conversations are handled with care and respect.</span>`;
  d.appendChild(p);main.appendChild(d);
 }
-async function start(mode,btn){
- btn.disabled=true;
- try{
-  if(!me){toast("Connecting… one moment.");await ready}
-  const r=await Promise.race([addDoc(collection(db,"conversations"),{userId:me,mode,status:"waiting",createdAt:serverTimestamp(),lastMessageAt:serverTimestamp()}),new Promise((_,j)=>setTimeout(()=>j({code:"timeout"}),10000))]);
-  cur={id:r.id,mode,role:"user"};view="chat";render();
- }catch(e){toast("Could not start ("+(e.code||"error")+"). Please try again.");btn.disabled=false}
-}
+function start(mode){cur={id:null,mode,role:"user",from:view};view="chat";render()}
 
 function chat(){
  const m=MODES[cur.mode],isL=cur.role==="listener",coarse=matchMedia("(pointer:coarse)").matches;
  const w=el("div","chat"),hd=el("div","hd"),back=el("button","back","‹ Back"),endb=el("button","endb","End chat");
- back.onclick=()=>go(isL?"inbox":"home");hd.append(back,el("h2",null,m.name),endb);
+ back.onclick=()=>{const to=cur.from||(isL?"inbox":"home");if(history.state&&history.state.chat)history.back();else go(to)};
+ hd.append(back,el("h2",null,m.name),endb);endb.hidden=!cur.id;
  const sub=el("p","mode",isL?"Guide: "+m.guide:m.sub);
  const box=el("div","msgs");box.setAttribute("aria-live","polite");
  const bar=el("div","bar");bar.hidden=true;
  const f=el("div","send"),ta=el("textarea");ta.rows=2;ta.maxLength=2000;ta.placeholder="Write here…";ta.setAttribute("aria-label","Your message");
  const sb=el("button",null,"Send");f.append(ta,sb);
  const foot=el("div","note");
- let status="waiting",reply=null,editing=null,last=[];
- const cref=doc(db,"conversations",cur.id),mref=id=>doc(db,"conversations",cur.id,"messages",id);
+ let status="waiting",reply=null,editing=null,last=[],sending=false;
+ const cref=()=>doc(db,"conversations",cur.id),mref=id=>doc(db,"conversations",cur.id,"messages",id);
  const setBar=()=>{
   bar.hidden=!(reply||editing);bar.innerHTML="";sb.textContent=editing?"Save":"Send";
   if(!bar.hidden){
@@ -204,7 +208,8 @@ function chat(){
  const draw=docs=>{
   box.innerHTML="";let care=false;
   box.appendChild(el("div","m sys",isL?"A person is waiting to talk. Be kind, be present. You are a listener, not a therapist.":"You're chatting with a peer listener, a real person but not a therapist. Replies may take a little while."));
-  if(status==="waiting"&&!isL)box.appendChild(el("div","m sys","Waiting for a listener. You can leave this page. Your conversation is saved in My Sessions."));
+  if(!cur.id&&!isL)box.appendChild(el("div","m sys","Say whatever is on your mind. Your conversation begins when you send your first message."));
+  if(cur.id&&status==="waiting"&&!isL)box.appendChild(el("div","m sys","Waiting for a listener. You can leave this page. Your conversation is saved in My Sessions."));
   docs.forEach(d=>{
    const x=d.data(),mine=x.senderId===me,b=el("div","m"+(mine?" me":""));
    if(x.deleted)b.appendChild(el("i",null,"This message was deleted"));
@@ -220,7 +225,8 @@ function chat(){
   if(care&&!isL)box.appendChild(el("div","m sys care",CARE));
   box.scrollTop=box.scrollHeight;
  };
- listen(cref,s=>{
+ const attach=()=>{
+ listen(cref(),s=>{
   status=(s.data()||{}).status||"waiting";
   const ended=status==="ended";ta.disabled=sb.disabled=ended;endb.hidden=ended;
   foot.innerHTML="";
@@ -229,26 +235,34 @@ function chat(){
   draw(last);
  });
  listen(query(collection(db,"conversations",cur.id,"messages"),orderBy("createdAt")),s=>{last=s.docs;draw(last)});
+ };
+ if(cur.id)attach();else draw([]);
  const send=async()=>{
-  const t=ta.value.trim();if(!t)return;
+  const t=ta.value.trim();if(!t||sending)return;
   if(editing){
    const id=editing.id;ta.value="";editing=null;setBar();
    try{await updateDoc(mref(id),{text:t,edited:true,flag:RISK.test(t)})}catch(e){toast("Could not save the edit.")}
    return;
   }
-  ta.value="";const rp=reply;reply=null;setBar();
-  const data={senderId:me,role:cur.role,text:t,flag:RISK.test(t),createdAt:serverTimestamp()};
-  if(rp)data.replyTo=rp;
+  sending=true;ta.value="";const rp=reply;reply=null;setBar();
   try{
+   if(!me){toast("Connecting… one moment.");await ready}
+   if(!cur.id){
+    const r=await addDoc(collection(db,"conversations"),{userId:me,mode:cur.mode,status:"waiting",createdAt:serverTimestamp(),lastMessageAt:serverTimestamp(),preview:t.slice(0,80),lastRole:"user"});
+    cur.id=r.id;endb.hidden=false;attach();
+   }
+   const data={senderId:me,role:cur.role,text:t,flag:RISK.test(t),createdAt:serverTimestamp()};
+   if(rp)data.replyTo=rp;
    await addDoc(collection(db,"conversations",cur.id,"messages"),data);
-   const up={lastMessageAt:serverTimestamp()};
+   const up={lastMessageAt:serverTimestamp(),preview:t.slice(0,80),lastRole:cur.role};
    if(isL&&status==="waiting")up.status="active";
-   await updateDoc(cref,up);
-  }catch(e){ta.value=t;toast("Message not sent. Please try again.")}
+   await updateDoc(cref(),up);
+  }catch(e){ta.value=t;toast("Message not sent ("+(e.code||"error")+"). Please try again.")}
+  sending=false;
  };
  sb.onclick=send;
  ta.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey&&!coarse){e.preventDefault();send()}});
- endb.onclick=async()=>{if(confirm("End this conversation?"))try{await updateDoc(cref,{status:"ended"})}catch(e){toast("Could not end it. Try again.")}};
+ endb.onclick=async()=>{if(confirm("End this conversation?"))try{await updateDoc(cref(),{status:"ended"})}catch(e){toast("Could not end it. Try again.")}};
  w.append(hd,sub,box,bar,f,foot);main.appendChild(w);
  if(!coarse)ta.focus({preventScroll:true});
 }
@@ -259,14 +273,14 @@ function list(q,role,emptyMsg){
  const rank={waiting:0,active:1,ended:2};
  listen(q,s=>{
   holder.innerHTML="";
-  const rows=s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>role==="listener"||!c.hiddenByUser)
+  const rows=s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.preview&&(role==="listener"||!c.hiddenByUser))
    .sort((a,b)=>(role==="listener"?(rank[a.status]??1)-(rank[b.status]??1):0)||(b.lastMessageAt?.seconds||0)-(a.lastMessageAt?.seconds||0));
   if(!rows.length){holder.appendChild(el("p","empty",emptyMsg));return}
   rows.forEach(c=>{
    const wr=el("div","rw"),r=el("button","row"),b=el("b",null,MODES[c.mode]?.name||"Conversation");
    b.appendChild(el("span","chip"+(c.status==="waiting"?" w":""),c.status));
-   r.append(b,el("br"),el("small",null,when(c.lastMessageAt)));
-   r.onclick=()=>{cur={id:c.id,mode:c.mode,role};view="chat";render()};
+   r.append(b,el("div","pv",c.preview||""),el("small",null,when(c.lastMessageAt)));
+   r.onclick=()=>{cur={id:c.id,mode:c.mode,role,from:view};view="chat";render()};
    wr.appendChild(r);
    if(role==="user"&&c.status==="ended"){
     const x=el("button","rm","Remove");
@@ -287,9 +301,45 @@ function sessions(){
  list(query(collection(db,"conversations"),where("userId","==",me)),"user","No sessions yet. Start one from Home whenever you're ready.");
  main.appendChild(el("p","note","Sessions are saved to this device's anonymous account. Clearing your browser data can remove access to them."));
 }
+let inboxTab="waiting",inboxMode="all";
 function inbox(){
  main.innerHTML='<div class="hd"><h2>Listener Inbox</h2></div>';
- list(query(collection(db,"conversations"),orderBy("lastMessageAt","desc")),"listener","No conversations yet.");
+ const tabs=el("div","tabs"),chips=el("div","chips"),holder=el("div");main.append(tabs,chips,holder);
+ const T=c=>c.lastMessageAt?.seconds||Date.now()/1000;
+ const NEED=c=>c.status!=="ended"&&c.lastRole==="user"?1:0;
+ let all=[];
+ const paint=()=>{
+  const live=all.filter(c=>c.preview);
+  const by={waiting:live.filter(c=>c.status==="waiting"),active:live.filter(c=>c.status==="active"),archive:live.filter(c=>c.status==="ended")};
+  const inMode=c=>inboxMode==="all"||c.mode===inboxMode;
+  tabs.innerHTML="";
+  [["waiting","Waiting"],["active","Active"],["archive","Archive"]].forEach(([k,l])=>{
+   const n=by[k].filter(inMode).length;
+   const b=el("button","tab"+(inboxTab===k?" on":""),k==="archive"?l:l+" ("+n+")");
+   b.onclick=()=>{inboxTab=k;paint()};tabs.appendChild(b);
+  });
+  chips.innerHTML="";
+  [["all","All"],["talk","Need to Talk"],["listen","Just Listen"],["advice","Talk + Advice"]].forEach(([k,l])=>{
+   const n=by[inboxTab].filter(c=>k==="all"||c.mode===k).length;
+   const b=el("button","chip2 m-"+k+(inboxMode===k?" on":""),l+" "+n);
+   b.onclick=()=>{inboxMode=k;paint()};chips.appendChild(b);
+  });
+  let rows=by[inboxTab].filter(inMode);
+  rows.sort(inboxTab==="waiting"?(a,b)=>T(a)-T(b):(a,b)=>NEED(b)-NEED(a)||T(b)-T(a));
+  if(inboxTab==="archive")rows=rows.slice(0,30);
+  holder.innerHTML="";
+  if(!rows.length){holder.appendChild(el("p","empty",inboxTab==="waiting"?"No one is waiting right now.":inboxTab==="active"?"No active conversations.":"Nothing in the archive."));return}
+  rows.forEach(c=>{
+   const r=el("button","row"),b=el("b",null,"");
+   const pill=el("span","chip m-"+c.mode,MODES[c.mode]?.name||"Chat");pill.style.marginLeft="0";
+   b.append(pill);
+   if(NEED(c))b.append(el("span","need","● Needs reply"));
+   r.append(b,el("div","pv",c.preview),el("small",null,when(c.lastMessageAt)));
+   r.onclick=()=>{cur={id:c.id,mode:c.mode,role:"listener",from:"inbox"};view="chat";render()};
+   holder.appendChild(r);
+  });
+ };
+ listen(query(collection(db,"conversations"),orderBy("lastMessageAt","desc"),limit(200)),s=>{all=s.docs.map(d=>({id:d.id,...d.data()}));paint()},e=>{holder.innerHTML="";holder.appendChild(el("p","empty","Could not load. Please check your connection."))});
 }
 function resources(){
  main.innerHTML='<div class="hd"><h2>Resources</h2></div>';
@@ -319,6 +369,7 @@ function profile(){
  }
  main.appendChild(c);
 }
+addEventListener("popstate",()=>{if(view==="chat"){view=(cur&&cur.from)||"home";render()}});
 render();
 </script>
 </body>
