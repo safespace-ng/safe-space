@@ -373,7 +373,10 @@ function profile(){
  }
  main.appendChild(c);
 }
-if("serviceWorker" in navigator)addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+if("serviceWorker" in navigator){
+ addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+ navigator.serviceWorker.addEventListener("message",e=>{if(e.data==="updated"){if(view==="home")location.reload();else toast("A new version is ready. Close and reopen the app to update.")}});
+}
 addEventListener("popstate",()=>{if(view==="chat"){view=(cur&&cur.from)||"home";render()}});
 render();
 </script>
