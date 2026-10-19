@@ -91,7 +91,7 @@ import {getFirestore,collection,doc,addDoc,updateDoc,query,where,orderBy,limit,g
 
 const app=initializeApp({apiKey:"AIzaSyC2EqQPDFlLx0c9puSqmPI6t_UFwQeGVPo",authDomain:"safe-space-8fd09.firebaseapp.com",projectId:"safe-space-8fd09",storageBucket:"safe-space-8fd09.firebasestorage.app",messagingSenderId:"656666751314",appId:"1:656666751314:web:24f07c6c5caf0f7384ca8b"});
 const auth=getAuth(app);
-const cands=[getFirestore(app),getFirestore(app,"default")];
+const cands=[getFirestore(app)];
 let db=cands[0],dbReady=false;
 
 const MODES={
