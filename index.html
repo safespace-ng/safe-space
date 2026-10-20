@@ -78,6 +78,9 @@ main{padding:28px 36px}#home{max-width:560px;margin:0 auto}}
 .chip2.m-talk,.chip.m-talk{background:var(--c1)}.chip2.m-listen,.chip.m-listen{background:var(--c2)}.chip2.m-advice,.chip.m-advice{background:var(--c3)}
 .need{color:#d9534f;font-weight:700;font-size:.78rem;margin-left:8px}
 .pv{color:var(--mute);font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.opt.dim{opacity:.55}
+.openc{background:var(--c1);border-radius:16px;padding:12px 14px;margin-bottom:14px}
+.openc p{margin:2px 0 8px;color:var(--mute);font-size:.9rem}
 </style>
 </head>
 <body>
@@ -129,9 +132,24 @@ onAuthStateChanged(auth,async u=>{
  if(!u){signInAnonymously(auth).catch(()=>toast("Could not connect."));return}
  db=await dbPromise;
  if(u.email)await checkListener();else isListener=false;
- me=u.uid;setReady();render();
+ me=u.uid;if(isListener){openConv=null;if(unwatch){unwatch();unwatch=null}}else watchOpen();setReady();render();
 });
 
+let openConv=null,unwatch=null;
+async function findOpen(){
+ const s=await getDocs(query(collection(db,"conversations"),where("userId","==",me)));
+ return s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.preview&&(c.status==="waiting"||c.status==="active")).sort((a,b)=>(b.lastMessageAt?.seconds||0)-(a.lastMessageAt?.seconds||0))[0]||null;
+}
+function watchOpen(){
+ if(unwatch){unwatch();unwatch=null}
+ openConv=null;if(!me)return;
+ unwatch=onSnapshot(query(collection(db,"conversations"),where("userId","==",me)),s=>{
+  const open=s.docs.map(d=>({id:d.id,...d.data()})).filter(c=>c.preview&&(c.status==="waiting"||c.status==="active")).sort((a,b)=>(b.lastMessageAt?.seconds||0)-(a.lastMessageAt?.seconds||0))[0]||null;
+  const changed=(open&&open.id)!==(openConv&&openConv.id)||(open&&openConv&&open.status!==openConv.status);
+  openConv=open;
+  if(changed&&view==="home")render();
+ },()=>{});
+}
 function nav(){
  const n=$("#nav");n.innerHTML="";
  const tabs=isListener?[["inbox","Inbox"],...TABS]:TABS;
@@ -152,8 +170,16 @@ const ic={talk:"💬",listen:"👂",advice:"🌿"};
 function home(){
  const d=el("div");d.id="home";
  d.innerHTML=`<div class="top"><h1>Safe Space <span style="font-size:1.6rem">♥</span></h1><p>A safe space to be heard, understood, and supported.</p></div>${hero}<p class="welcome">You don't have to figure everything out alone.</p>`;
+ if(openConv){
+  const bn=el("div","openc"),mm=MODES[openConv.mode];
+  bn.append(el("b",null,"You have an open conversation"),el("p",null,(mm?mm.name:"Chat")+" · "+(openConv.status==="waiting"?"waiting for a listener":"with a listener")));
+  const rs=el("button","btn","Continue"),en=el("button","btn alt","End it");
+  rs.onclick=()=>{cur={id:openConv.id,mode:openConv.mode,role:"user",from:"home"};view="chat";render()};
+  en.onclick=async()=>{if(confirm("End this conversation? You can start a new one after."))try{await updateDoc(doc(db,"conversations",openConv.id),{status:"ended"})}catch(e){toast("Could not end it. Try again.")}};
+  bn.append(rs," ",en);d.appendChild(bn);
+ }
  [["talk","o1"],["listen","o2"],["advice","o3"]].forEach(([k,c])=>{
-  const b=el("button","opt "+c);
+  const b=el("button","opt "+c+(openConv?" dim":""));
   b.innerHTML=`<span class="ic" style="font-size:1.5rem">${ic[k]}</span><span><b>${MODES[k].name}</b><span>${MODES[k].sub}</span></span><span class="go" aria-hidden="true">›</span>`;
   b.onclick=()=>start(k,b);d.appendChild(b);
  });
@@ -161,7 +187,13 @@ function home(){
  p.innerHTML=`<span style="font-size:1.6rem" aria-hidden="true">🛡️</span><span><b>Your privacy matters.</b>Your conversations are handled with care and respect.</span>`;
  d.appendChild(p);main.appendChild(d);
 }
-function start(mode){cur={id:null,mode,role:"user",from:view};view="chat";render()}
+function start(mode){
+ if(openConv){
+  toast("You already have an open conversation. Continue it, or end it to start a new one.");
+  cur={id:openConv.id,mode:openConv.mode,role:"user",from:view};view="chat";render();return;
+ }
+ cur={id:null,mode,role:"user",from:view};view="chat";render();
+}
 
 function chat(){
  const m=MODES[cur.mode],isL=cur.role==="listener",coarse=matchMedia("(pointer:coarse)").matches;
@@ -251,6 +283,10 @@ function chat(){
   sending=true;ta.value="";const rp=reply;reply=null;setBar();
   try{
    if(!me){toast("Connecting… one moment.");await ready}
+   if(!cur.id){
+    const ex=await findOpen();
+    if(ex){cur.id=ex.id;cur.mode=ex.mode;endb.hidden=false;attach();toast("You already have an open conversation, so your message was added to it.")}
+   }
    if(!cur.id){
     const r=await addDoc(collection(db,"conversations"),{userId:me,mode:cur.mode,status:"waiting",createdAt:serverTimestamp(),lastMessageAt:serverTimestamp(),preview:t.slice(0,80),lastRole:"user"});
     cur.id=r.id;endb.hidden=false;attach();
